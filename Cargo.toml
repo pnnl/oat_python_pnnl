@@ -3,12 +3,12 @@ name = "oat_python"
 version         =   "0.1.0"
 authors         =   ["Gregory Henselman-Petrusek Roek<gregory.roek@pnnl.gov>"]
 edition         =   "2018"
-license-file    =   "LICENSE.md"
+license-file    =   "LICENSE"
 description     =   "User-friendly tools for applied topology in Python"
 homepage        =   "https://openappliedtopology.github.io"
 repository      =   "https://github.com/OpenAppliedTopology/oat_python"
 categories      =   ["mathematics", "science"]
-keywords        =   ["data", "geometry", "machine learning"]
+keywords        =   ["data", "geometry", "machine learning", "ML", "HPC"]
 
 [lib]
 name = "oat_python"
@@ -29,19 +29,9 @@ indicatif = "0.17.3"
 itertools = "0.10.0"
 log = "0.4.14"
 num = "0.4.0"
-# numpy = "0.14"
-# ndarray = ">= 0.13, < 0.16"
+oat_rust = "0.1.0"
 ordered-float = "3.4.0"
-# pyo3-log = "0.5.0"
-# polars = "0.28.0"
-# pyo3-polars = "0.2.1"
 pyo3 = { version = "0.19.2", features = ["extension-module"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-oat_rust = { path = "../oat_rust" }
 sprs = "0.11.0"
-
-
-
-[package.metadata.maturin]
-requires = ["maturin", "numpy", "pandas", "matplotlib", "scikit-learn", "plotly", "networkx", "scipy", "nbformat", "kaleido"]  # Add your Python dependencies here

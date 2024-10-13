@@ -45,7 +45,7 @@ For information on **contributing**, see [`CONTRIBUTING`](https://github.com/Ope
 
 ## License
 
-For inforamtion on copyright and licensing, see [`LICENSE.md`](https://github.com/OpenAppliedTopology/oat_python/blob/main/LICENSE.md) and [`DISCLAIMER.md`](https://github.com/OpenAppliedTopology/oat_python/blob/main/DISCLAIMER.md).
+For inforamtion on copyright and licensing, see [`LICENSE`](https://github.com/OpenAppliedTopology/oat_python/blob/main/LICENSE) and [`DISCLAIMER`](https://github.com/OpenAppliedTopology/oat_python/blob/main/DISCLAIMER).
 
 ## Attributions
 
