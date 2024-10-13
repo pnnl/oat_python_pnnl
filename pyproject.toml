@@ -1,0 +1,28 @@
+[package]
+# package information is automatically merged from Cargo.toml
+
+
+
+[build-system]
+requires = ["maturin>=1.0,<2.0"]
+build-backend = "maturin"
+
+
+
+[project]
+name                =   "oat_python"  # Add this field (this is likely the source of your error)
+version             =   "0.1.0"
+dependencies        =   [   
+                            # The dependencies listed below will be installed automatically when users install the package on Python
+                            "hypernetx",
+                            "kaleido",
+                            "matplotlib",
+                            "maturin", 
+                            "nbformat", 
+                            "networkx", 
+                            "numpy", 
+                            "pandas",  
+                            "plotly", 
+                            "scikit-learn", 
+                            "scipy",
+                        ]  
