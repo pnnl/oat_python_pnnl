@@ -75,36 +75,7 @@
 //! 
 //! **Modularity**
 //! 
-// //! Creative recombination of building blocks is among the most important ways we innovate.  
-//! 
 //!   OAT reduces complex problems to the same basic building blocks that topologists use when writing on a chalk board. Users can mix and match those blocks with confidence, using a simple, streamlined interface.  They can even create new components that work seemlessly with the rest of the library, including coefficient rings, sparse matrix data structures, and customized filtrations on simplicial complexes.
-//! 
-// //! OAT offers powerful features for beginners through advanced users.
-// //! 
-// //! <span style="color: orange;">Performance</span>
-// //! 
-// //!  OAT is a first-class engine for cutting-edge applications.  It is specially suited to large, sparse // matrices.
-// //!     The core library is written in Rust, a low-level systems programming language designed for safety and // performance.
-// //!     High-level wrappers are available in Python.
-// //! 
-// //! <span style="color: orange;">Reliability</span>
-// //! 
-// //! Verification and test coverage: the OAT library is extensively tested.  In addition, the modular design of // the library makes it easy for users to generate their own certificates of correctness.
-// //! 
-// //! Safety: OAT inherits strong safety guarantees from the features of the Rust compiler, especially in the // open source development process
-// //! 
-// //! <span style="color: orange;">Transparency</span>
-// //! 
-// //! - Documentation:  emphasizes clarity and accessibility for users with all backgrounds. OAT docs provide // explicit descriptions of both code *and* the underlying mathematical concepts. 
-// //! - [Online Jupyter notebook tutorials](crate::tutorials) offer examples and helpful tips for beginners // through advanced Rust users.
-// //! - Indexing: is one of the most pervasive challenges to writing transparent, interpretable code in // computational topology.  OAT's matrices and vectors can be indexed by simplices, cubes, and other user-defined // data structures, in addition to integers.
-// //! 
-// //! <span style="color: orange;">Modularity</span>
-// //! 
-// // //! Creative recombination of building blocks is among the most important ways we innovate.  
-// //! 
-// //!   OAT breaks problems into the same basic building blocks that topologists use when writing on a chalk // board. Users can mix and match those blocks with confidence, with a simple, streamlined interface.  They can // even create new components that work seemlessly with the rest of the library, including coefficient rings, // sparse matrix data structures, and customized filtrations on simplicial complexes.
-//! 
 //! 
 //! 
 //! # Get Started
