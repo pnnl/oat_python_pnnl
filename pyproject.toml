@@ -11,7 +11,7 @@ build-backend = "maturin"
 
 [project]
 name                =   "oat_python"  # Add this field (this is likely the source of your error)
-version             =   "0.1.0"
+version             =   "0.1.1"
 dependencies        =   [   
                             # The dependencies listed below will be installed automatically when users install the package on Python
                             "hypernetx",
