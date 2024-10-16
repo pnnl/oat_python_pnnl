@@ -1,6 +1,6 @@
 [package]
 name = "oat_python"
-version         =   "0.1.0"
+version         =   "0.1.1"
 authors         =   ["Gregory Henselman-Petrusek Roek<gregory.roek@pnnl.gov>"]
 edition         =   "2018"
 license-file    =   "LICENSE"
