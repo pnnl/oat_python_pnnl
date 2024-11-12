@@ -1,7 +1,7 @@
 LICENSE
 -------------------------------------------------------------------------------
 
-Copyright 2022 Battelle Memorial Institute
+Copyright 2024 Battelle Memorial Institute
 
 1.	Battelle Memorial Institute (hereinafter Battelle) hereby grants permission to any person or entity lawfully obtaining a copy of this software and associated documentation files (hereinafter “the Software”) to redistribute and use the Software in source and binary forms, with or without modification.  Such person or entity may use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and may permit others to do so, subject to the following conditions:
 	•	Redistributions of source code must retain the above copyright notice, this list of conditions and the following disclaimers. 
@@ -19,7 +19,7 @@ This software is an extension/modification of the oat_rust library developed by 
 
 MIT License
 
-Copyright (c) 2021 The oat_rust Developers
+Copyright (c) 2024 The Open Applied Topology Developers
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
