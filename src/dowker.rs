@@ -7,6 +7,7 @@ use pyo3::exceptions::PyTypeError;
 use pyo3::prelude::*;
 use pyo3::types::IntoPyDict;
 use pyo3::types::PyDict;
+use pyo3::types::PyTuple;
 use pyo3::wrap_pyfunction;
 // use pyo3_log;
 
@@ -14,28 +15,26 @@ use itertools::Itertools;
 use num::rational::Ratio;
 use ordered_float::OrderedFloat;
 
-use oat_rust::topology::simplicial::simplices::filtered::SimplexFiltered;
-use oat_rust::algebra::chains::barcode::Bar;
-use oat_rust::topology::simplicial::from::relation::BoundaryMatrixDowker;
-use oat_rust::topology::simplicial::from::relation::dowker_boundary_diagnostic;
+use oat_rust::topology::simplicial::simplices::weighted::WeightedSimplex;
+use oat_rust::algebra::chain_complexes::barcode::Bar;
+use oat_rust::topology::simplicial::from::relation::DowkerComplex;
+use oat_rust::topology::simplicial::from::relation::validate_dowker_boundary_matrix;
 use oat_rust::topology::simplicial::simplices::vector::OrderOperatorTwistSimplex;
 
-use oat_rust::algebra::chains::factored::FactoredBoundaryMatrix;
-use oat_rust::algebra::chains::factored::factor_boundary_matrix;
-use oat_rust::algebra::matrices::operations::umatch::row_major::Umatch;
+use oat_rust::algebra::matrices::operations::umatch::differential::DifferentialUmatch;
 use oat_rust::algebra::vectors::operations::VectorOperations;
-use oat_rust::algebra::matrices::query::ViewRowAscend;
-use oat_rust::algebra::matrices::query::ViewColDescend;
-use oat_rust::algebra::rings::operator_structs::ring_native::FieldRationalSize;
-use oat_rust::algebra::rings::operator_structs::ring_native::DivisionRingNative;
+use oat_rust::algebra::matrices::query::{MatrixOracle, MatrixAlgebra};
+use oat_rust::algebra::rings::types::native::FieldRationalSize;
+use oat_rust::algebra::rings::types::native::RingOperatorForNativeRustNumberType;
 use oat_rust::utilities::iterators::general::RequireStrictAscentWithPanic;
 use oat_rust::utilities::order::JudgeOrder;
-use oat_rust::utilities::order::{OrderOperatorByKey, OrderOperatorByKeyCutsom};
+use oat_rust::utilities::order::{OrderOperatorByKey, OrderOperatorByKeyCustom};
 use oat_rust::utilities::order::ReverseOrder;
 use oat_rust::utilities::order::is_sorted_strictly;
 use oat_rust::utilities::sequences_and_ordinals::SortedVec;
 
-use crate::export::Export;
+
+use crate::export::{IntoDataframeFormat};
 
 type FilVal     =   OrderedFloat<f64>;
 type RingElt    =   Ratio<isize>;
@@ -54,12 +53,12 @@ type RingElt    =   Ratio<isize>;
 //     fn indices_homology( &self ) -> Vec<Vec<usize>>;        
 //     fn betti_numbers() -> HashMap< isize: isize >;
 //     fn jordan_column_for_hnumber( &self, colnum: usize ) -> Vec< ( Vec<usize>, isize, isize ) >;
-//     fn jordan_column_for_simplex( &self, colnum: usize ) -> Vec< ( Vec<usize>, isize, isize ) >;
+//     fn matching_basis_vector_for_simplex( &self, colnum: usize ) -> Vec< ( Vec<usize>, isize, isize ) >;
 // }
 
 
-type Vertex = isize;
-type RingOperator = DivisionRingNative< Ratio<isize> >;
+type Vertex = usize;
+type RingOperator = RingOperatorForNativeRustNumberType< Ratio<isize> >;
 type RingElement = Ratio<isize>;
 
 
@@ -78,54 +77,41 @@ impl < T > Dimension for Vec< T > {
 
 
 
-/// Places a chain in a nice dataframe format
-fn chain_to_dataframe<'py>(
-        chain:      Vec< ( Vec< isize >, Ratio< isize > ) >,
-        py:         Python< 'py >,
-    ) -> Py<PyAny> {
-
-    let (simplices,coefficients): (Vec<_>,Vec<_>) 
-        =  chain.into_iter().map(|(s,z)| (s, z.export() ) )
-                .unzip();
-    let dict = PyDict::new(py);
-    dict.set_item( "simplex", simplices ).ok().unwrap();   
-    dict.set_item( "coefficient", coefficients ).ok().unwrap();  
-
-    let pandas = py.import("pandas").ok().unwrap();       
-    pandas.call_method("DataFrame", ( dict, ), None)
-        .map(Into::into).ok().unwrap()    
-}
 
 
-
-#[pyclass]
+#[pyclass(name="BoundaryMatrixDecompositionDowker")]
 #[derive(Clone)]
-/// Wrapper for the factored boundary matrix of a Dowker complex, with rational coefficients
-pub struct FactoredBoundaryMatrixDowker{
-    factored:   FactoredBoundaryMatrix<
-                        // matrix
-                        BoundaryMatrixDowker
-                            < Vertex, RingOperator, RingElement >,
-                        DivisionRingNative< RingElt >, // ring operator
-                        OrderOperatorByKeyCutsom< 
-                                Vec<Vertex>,
-                                RingElt,
-                                (Vec<Vertex>, RingElt),
-                                OrderOperatorTwistSimplex,
-                            >, 
-                        Vec< Vertex >,
-                        ( Vec< Vertex >, RingElt ),
-                        Vec< Vec< Vertex > >,
-                    >,
+/// A :term:`differential umatch decomposition` for the
+/// boundary matrix of a Dowker complex, with rational coefficients.
+/// This can be used to compute
+/// 
+/// - (co)homology groups
+/// - (co)cycle representatives
+/// - bounding chains
+/// 
+/// and more!
+pub struct DowkerComplexDifferentialUmatch{
+    differential_umatch:   DifferentialUmatch<
+                    // matrix
+                    DowkerComplex
+                        < Vertex, RingOperator >,
+                >,
     max_homology_dimension:     isize,
 }
 
 
 #[pymethods]
-impl FactoredBoundaryMatrixDowker {
+impl DowkerComplexDifferentialUmatch {
 
 
-    /// Obtain a factored chain complex.
+    /// Construct and factor the boundary matrix of a Dowker complex.
+    /// 
+    /// The resulting object can be used to compute homology, cycle spaces, boundaries, etc.
+    /// 
+    /// # Arguments
+    /// 
+    /// - `dowker_simplices`: A list of (sorted in strictly ascending order) lists of integers to use for initialization.        
+    /// - `max_homology_dimension` the maximum dimension in which we want to compute homology
     #[new]
     pub fn new( 
             dowker_simplices:           Vec< Vec< Vertex > >,
@@ -133,6 +119,8 @@ impl FactoredBoundaryMatrixDowker {
         ) -> 
         PyResult< Self >
     {
+        let min_homology_dimension = 0;
+
         // convert the simplices to ordered vectors, for safety
         let dowker_simplices: Result< Vec<_>, _> = dowker_simplices.into_iter().map(|x| SortedVec::new(x) ).collect();
 
@@ -141,19 +129,23 @@ impl FactoredBoundaryMatrixDowker {
                 // we use rational coefficients
                 let ring_operator = FieldRationalSize::new();
                 // construct the boundary matrix
-                let boundary_matrix = BoundaryMatrixDowker::new( dowker_simplices, ring_operator );
-                // list the row indices we will visit (in order) when reducing the matrix
-                let row_indices = boundary_matrix.row_indices_in_descending_order(max_homology_dimension).collect_vec();
+                let boundary_matrix = DowkerComplex::new( dowker_simplices, ring_operator );
                 // factor
-                let factored = factor_boundary_matrix(
+                let differential_umatch = DifferentialUmatch::new(
                         boundary_matrix, 
-                        ring_operator,
-                        OrderOperatorTwistSimplex::new(), 
-                        row_indices,             
+                        min_homology_dimension,             
+                        max_homology_dimension,
                     );   
-                return Ok( FactoredBoundaryMatrixDowker{ factored, max_homology_dimension } )
-            }, Err( message ) => {
-                Err(PyErr::new::<PyTypeError, _>( message ))
+                return Ok( DowkerComplexDifferentialUmatch{ differential_umatch, max_homology_dimension } )
+            }, Err( unsorted_vec ) => {
+                Err(PyErr::new::<PyTypeError, _>(
+                    format!(
+                        "One of the input vectors is not sorted in strictly ascending order: {:?}\n\
+                        All input vectors (simplices) must be sorted in strictly ascending order. \
+                        Please check your input and try again.",
+                        unsorted_vec
+                    )
+                ))
             }
         }
 
@@ -175,36 +167,25 @@ impl FactoredBoundaryMatrixDowker {
         & self, 
     ) 
     -> Vec< Vec< Vertex > > { 
-        self.factored.row_indices()
+        self.differential_umatch.row_reduction_indices()
     }
 
-    /// Returns the sequence of row indices of the boundary matrix sorted (first) 
-    /// in ascending order of dimension, and (second) in descending lexicographic
-    /// order; simplices of dimension greater than `max_simplex_dimension` are excluded.
-    pub fn row_indices_in_descending_order_beyond_matrix( 
-        & self, 
-        max_simplex_dimension:      isize,
-    ) 
-    -> Vec< Vec< Vertex > > { 
-        self.factored.umatch().mapping_ref().row_indices_in_descending_order( max_simplex_dimension ).collect_vec()
-    }
-
-    /// Returns the column indices of the Jordan basis that collectively represent a basis for homology.
+    /// Returns the column indices of the differential COBM that collectively represent a basis for homology.
     pub fn homology_indices( 
             & self,
         ) -> Vec< Vec< Vertex > > 
     {
-        self.factored.indices_harmonic().collect_vec()
+        self.differential_umatch.homology_indices()
     }
 
-    /// Returns an element of the Jordan basis
-    pub fn jordan_column_for_simplex<'py>(
+    /// Returns a column of the differential COBM
+    pub fn matching_basis_vector_for_simplex<'py>(
             & self,
-            keymaj:         Vec< Vertex >,
+            simplex:        Vec< Vertex >,
             py:             Python< 'py >,
-        ) -> Py<PyAny> {
+        ) -> PyResult< PyObject > {
 
-        chain_to_dataframe( self.factored.jordan_basis_vector(keymaj).collect_vec(), py)       
+        self.differential_umatch.differential_comb().column( &simplex ).collect_vec().into_dataframe_format(py)       
     }             
 
     /// Returns a column of the boundary matrix
@@ -212,50 +193,58 @@ impl FactoredBoundaryMatrixDowker {
             & self,
             index:          Vec< Vertex >,
             py:             Python< 'py >,
-        ) -> Py<PyAny> {
+        ) -> PyResult<PyObject> {
 
-        chain_to_dataframe( 
-            self.factored.umatch().mapping_ref().view_minor_descend(index).collect_vec(), 
-            py 
-        )       
+        self.differential_umatch.boundary_matrix().column(&index).collect_vec().into_dataframe_format(py)
     }
 
-    /// Returns row of the boundary matrix
+    /// Returns a row of the boundary matrix
     pub fn coboundary<'py>(
             & self,
             index:          Vec< Vertex >,
             py:             Python< 'py >,
-        ) -> Py<PyAny> {
+        ) -> PyResult<PyObject> {
 
-        chain_to_dataframe(
-            self.factored.umatch().mapping_ref().view_major_ascend(index).collect_vec(), 
-            py
-        )        
+            self.differential_umatch.boundary_matrix().row(&index).collect_vec().into_dataframe_format(py)
     } 
 
     /// Returns the index of the matched column of the boundary matrix (if it exists)
     pub fn get_matched_column(
         & self,
         index:         Vec< Vertex >
-    ) -> Option< Vec<isize> > {    
-        return self.factored.umatch().matching_ref().keymaj_to_keymin(&index).clone()
+    ) -> Option< Vec<usize> > {    
+        self.differential_umatch.generalized_matching_matrix().column_index_for_row_index(&index).clone()
     }            
 
     /// Returns the index of the matched row of the boundary matrix (if it exists)
     pub fn get_matched_row(
         & self,
         index:         Vec< Vertex >
-    ) -> Option< Vec<isize> > {    
-        return self.factored.umatch().matching_ref().keymin_to_keymaj(&index).clone()
+    ) -> Option< Vec<usize> > {    
+        self.differential_umatch.generalized_matching_matrix().row_index_for_column_index(&index).clone()
     }                
+
+    /// The Betti numbers of the Dowker complex.
+    /// 
+    /// Returns a list [b_0, b_1, ..., b_max_homology_dimension], where b_i is the dimension of the i-th homology group.
+    pub fn betti_numbers<'py>( & self ) -> Vec< isize > {
+        let cycles      =   self.differential_umatch.cycle_space_dimensions();
+        let bounds      =   self.differential_umatch.boundary_space_dimensions();
+        let cycles = (0 .. self.max_homology_dimension + 1 ).map( |x| cycles.get(&x).cloned().unwrap_or(0) ).collect_vec();
+        let bounds = (0 .. self.max_homology_dimension + 1 ).map( |x| bounds.get(&x).cloned().unwrap_or(0) ).collect_vec();
+        let bettis = (0 .. self.max_homology_dimension as usize + 1 ).map( |x| cycles[x] - bounds[x] ).collect_vec();        
+
+        return bettis
+    }
+
+
 
     /// Dimensions of homology and the spaces of chains, cycles, boundaries
     /// 
     /// Each entry is the dimension of a vector space.
-    pub fn betti<'py>( & self, py: Python<'py> ) -> PyResult< Py<PyAny> > {
-        let dim_fn      =   |x: Vec<_>| x.len() as isize - 1;
-        let cycles      =   self.factored.cycle_numbers(dim_fn);
-        let bounds      =   self.factored.boundary_numbers(dim_fn);
+    pub fn fundamental_subspace_dimensions<'py>( & self, py: Python<'py> ) -> PyResult< Py<PyAny> > {
+        let cycles      =   self.differential_umatch.cycle_space_dimensions();
+        let bounds      =   self.differential_umatch.boundary_space_dimensions();
         let cycles = (0 .. self.max_homology_dimension + 1 ).map( |x| cycles.get(&x).cloned().unwrap_or(0) ).collect_vec();
         let bounds = (0 .. self.max_homology_dimension + 1 ).map( |x| bounds.get(&x).cloned().unwrap_or(0) ).collect_vec();
         let bettis = (0 .. self.max_homology_dimension as usize + 1 ).map( |x| cycles[x] - bounds[x] ).collect_vec();        
@@ -263,28 +252,49 @@ impl FactoredBoundaryMatrixDowker {
             .map(|(degree, c)| match degree == 0 { true=>{c},false=>{c+bounds[degree-1]} }).collect_vec();
 
         let dict = PyDict::new(py);
-        dict.set_item( "homology",              bettis  ).ok().unwrap();
-        dict.set_item( "space of chains",       chains  ).ok().unwrap();           
-        dict.set_item( "space of cycles",       cycles  ).ok().unwrap();
-        dict.set_item( "space of boundaries",   bounds  ).ok().unwrap();     
+        dict.set_item( "homology",              bettis  )?;
+        dict.set_item( "space_of_chains",       chains  )?;           
+        dict.set_item( "space_of_cycles",       cycles  )?;
+        dict.set_item( "space_of_boundaries",   bounds  )?;     
         
-        let pandas = py.import("pandas").ok().unwrap();       
+        let pandas = py.import("pandas")?;       
         let df: Py<PyAny> = pandas.call_method("DataFrame", ( dict, ), None)
-            .map(Into::into).ok().unwrap();  
+            .map(Into::into)?;  
         let index = df.getattr( py, "index", )?;
         index.setattr( py, "name", "dimension", )?;
         return Ok(df)
-    }
+    }    
+
 
     /// Runs a diagnostic to check that major and minor views of the dowker complex agree.
     pub fn diagnostic( &self, maxdim: isize ) {        
-        let dowker_simplices 
-            = self.factored.umatch().mapping_ref().dowker_simplices().iter().map(|x| x.vec().clone()).collect_vec();
-        dowker_boundary_diagnostic( dowker_simplices, maxdim );
+        let dowker_simplices = self.differential_umatch
+            .boundary_matrix()
+            .relation_rows()
+            .clone();
+        validate_dowker_boundary_matrix( dowker_simplices, maxdim );
     }
 
-    /// Return a data frame summarizing homology
-    pub fn homology<'py>( &self, py: Python<'py>) -> Py<PyAny> {
+    /// Returns a data frame representing a basis for homology.
+    /// 
+    /// Each row of the data frame represents a homology class; together these homology
+    /// classes form a basis for homology.  The data frame has the following columns:
+    /// 
+    /// - `dimension`: The dimension of the homology class
+    /// - `cycle_representative`: A cycle representative for the homology class.
+    ///   This is represented as a dataframe with columns `simplex` and `coefficient`.
+    /// - `cycle_representative_nonzero_coefficient_count`: The number of nonzero coefficients in
+    ///   the cycle representative.
+    /// - `unique_simplex_id`: A simplex which can be used as a unique identifier for the homology class
+    ///   (each homology class gets a different `unique_simplex_id`).
+    /// 
+    /// 
+    ///   **Note: The `unique_simplex_id` corresponds to the birth simplex in persistent homology**.
+    ///   The homology computation for Dowker complexes is implemented in essentially the same
+    ///   way as a persistent homology computation -- with simplices ordered lexicographically.
+    ///   The `unique_simplex_id` is simply the birth simplex from that computation.
+    /// 
+    pub fn homology<'py>( &self, py: Python<'py>) -> PyResult<PyObject> {
         let dict = PyDict::new(py);
         let harmonic_indices = self.homology_indices();
 
@@ -292,22 +302,26 @@ impl FactoredBoundaryMatrixDowker {
         let mut chains = Vec::new();
         let mut nnz = Vec::new();
         let mut dims = Vec::new();
-        for x in harmonic_indices {
-            let chain = self.factored.jordan_basis_vector(x.clone()).collect_vec();
-            birth_simplices.push( x.clone() );
-            dims.push( x.dimension() );
+        for birth_simplex in harmonic_indices {
+            dims.push( birth_simplex.len()-1 );            
+            let chain   =   self.differential_umatch
+                .differential_comb()
+                .column(&birth_simplex)
+                .collect_vec();
+            let simplex: pyo3::Bound<'_, PyTuple> = PyTuple::new(py, birth_simplex)?;
+            birth_simplices.push( simplex );
             nnz.push( chain.len() );
-            chains.push( chain.export() );
+            chains.push( chain.into_dataframe_format(py)? );
         }
 
-        dict.set_item( "dimension", dims ).ok().unwrap();
-        dict.set_item( "birth simplex", birth_simplices ).ok().unwrap();
-        dict.set_item( "cycle representative", chains ).ok().unwrap();
-        dict.set_item( "nnz", nnz ).ok().unwrap(); 
+        dict.set_item( "dimension", dims )?;
+        dict.set_item( "cycle_representative", chains )?;
+        dict.set_item( "cycle_representative_nonzero_coefficient_count", nnz )?; 
+        dict.set_item( "unique_simplex_id", birth_simplices )?;        
         
-        let pandas = py.import("pandas").ok().unwrap();       
+        let pandas = py.import("pandas")?;       
         pandas.call_method("DataFrame", ( dict, ), None)
-            .map(Into::into).ok().unwrap()
+            .map(Into::into)
     }
 
 
@@ -322,14 +336,15 @@ impl FactoredBoundaryMatrixDowker {
     /// - `x` is unconstrained
     /// - `z` is a cycle representative for a (persistent) homology class associated to `birth_simplex`
     /// - `A` is a matrix composed of a subset of columns of the Jordna basis
-    /// - `Cost(z)` is the sum of the absolute values of the products `z_s * diameter(s)`.
+    /// - `Cost(z)` is the sum of the absolute values of the products `z_s * filtration_value(s)`.
     /// 
     /// # Arguments
     /// 
     /// - The `birth_simplex` of a cycle represenative `z` for a bar `b` in persistent homology.
     /// - The `problem_type` type for the problem. The optimization procedure works by adding linear
-    /// combinations of column vectors from the Jordan basis matrix computed in the factorization.
-    /// This argument controls which columns are available for the combination.
+    ///   combinations of column vectors from the Jordan basis matrix computed in the factorization.
+    ///   This argument controls which columns are available for the combination.
+    /// 
     ///   - (default) **"preserve PH basis"** adds cycles which appear strictly before `birth_simplex`
     ///     in the lexicographic ordering on filtered simplex (by filtration, then breaking ties by
     ///     lexicographic order on simplices) and die no later than `birth_simplex`.  **Note** this is
@@ -350,11 +365,13 @@ impl FactoredBoundaryMatrixDowker {
     /// 
     /// A pandas dataframe containing
     /// 
-    /// - `z`, labeled "initial cycle"
-    /// - `y`, labeled "optimal cycle"
+    /// - `z`, labeled "initial_cycle"
+    /// - `y`, labeled "optimal_cycle"
     /// - `x`, which we separate into two components: 
-    ///     - "difference in bounding chains", which is made up of codimension-1 simplices
-    ///     - "difference in essential cycles", which is made up of codimension-0 simplices
+    /// 
+    ///     - "surface_between_cycles", which is made up of codimension-1 simplices
+    ///     - "difference_in_essential cycles", which is made up of codimension-0 simplices
+    /// 
     /// - The number of nonzero entries in each of these chains
     /// - The objective values of the initial and optimized cycles
     /// 
@@ -366,49 +383,58 @@ impl FactoredBoundaryMatrixDowker {
     /// - [Obayashi, Tightest representative cycle of a generator in persistent homology](https://epubs.siam.org/doi/10.1137/17M1159439)
     /// - [Minimal Cycle Representatives in Persistent Homology Using Linear Programming: An Empirical Study With User’s Guide](https://www.frontiersin.org/articles/10.3389/frai.2021.681117/full)
     /// 
-    #[pyo3(signature = (birth_simplex, problem_type, ))]
+    #[pyo3(signature = (unique_simplex_id, problem_type, verbose=true))]
     pub fn optimize_cycle< 'py >( 
                 &self,
-                birth_simplex:      Vec< isize >,
-                problem_type:         Option< &str >,
+                unique_simplex_id:      Vec< usize >,
+                problem_type:           Option< &str >,
+                verbose:                bool,
                 py: Python< 'py >,
-            ) -> Option< Py<PyAny> > // Option< &'py PyDict > { // MinimalCyclePySimplexFilteredRational 
+            ) -> PyResult<PyObject> // Option< &'py PyDict > { // MinimalCyclePyWeightedSimplexRational 
         {
 
         // inputs
-        let array_matching                  =   self.factored.umatch().matching_ref();        
-        let order_operator                  =   self.factored.umatch().order_operator_major_reverse();
+        let matching_matrix                  =   self.differential_umatch.generalized_matching_matrix(); 
+        let boundary_matrix                                    =   self.differential_umatch.boundary_matrix();       
+        let order_operator                  =   self.differential_umatch.asymmetric_umatch().order_operator_for_row_entries_reverse();
         
         // matrix a, vector c, and the dimension function
-        let dim_fn = |x: & Vec< isize > | x.len() as isize - 1 ;
-        let obj_fn = |x: & Vec< isize > | 1.; 
-        let a = |k: & Vec< isize >| self.factored.jordan_basis_vector(k.clone()); 
+        let dim_fn = |x: & Vec< usize > | x.len() as isize - 1 ;
+        let obj_fn = |x: & Vec< usize > | 1.; 
+        let a = |k: & Vec< usize >| self.differential_umatch.differential_comb().column_reverse( k ); 
              
         // column b
-        let dimension = dim_fn( & birth_simplex );
-        let b = self.factored.jordan_basis_vector( birth_simplex.clone() );
+        let dimension = dim_fn( & unique_simplex_id );
+        let b = self.differential_umatch.differential_comb().column_reverse( &unique_simplex_id );
 
         let column_indices = match problem_type.unwrap_or("preserve PH basis") {
             "preserve homology class"    =>  {
-                self.factored
-                    .indices_boundary() // indices of all boundary vectors in the jordan basis
+                self.differential_umatch
+                    .boundary_space_indices() // indices of all boundary vectors in the jordan basis
+                    .into_iter()
                     .filter(|x| x.dimension() ==dimension ) // of appropriate dimension    
                     .collect_vec()     
             }
             "preserve homology basis (once)"    =>  {
-                self.factored
-                    .indices_cycle() // indices of all boundary vectors in the jordan basis
-                    .filter(|x| (x.dimension()==dimension) && ( x != &birth_simplex) ) // of appropriate dimension 
+                self.differential_umatch
+                    .cycle_space_indices() // indices of all boundary vectors in the jordan basis
+                    .into_iter()
+                    .filter(|x| (x.dimension()==dimension) && ( x != &unique_simplex_id) ) // of appropriate dimension 
                     .collect_vec()           
             }    
             _ => {
-                println!("\n\nError: Invaid input supplied for the `problem_type` keyword argument.\nThis message is generated by OAT.\n\n");
-                return None
+                return Err( PyErr::new::<pyo3::exceptions::PyValueError, _>( "Invaid input supplied for the `problem_type` keyword argument. This argument must be a string equal to either `preserve homology class` or `preserve homology basis (once)`.\nThis message is generated by OAT." ) );
             }                              
         };
 
         // solve
-        let optimized = oat_rust::utilities::optimization::minimize_l1::minimize_l1(a, b, obj_fn, column_indices).unwrap();
+        let optimized = oat_rust::utilities::optimization::minimize_l1::minimize_l1(
+            a, 
+            b, 
+            obj_fn, 
+            column_indices,
+            verbose
+        ).unwrap();
 
         // formatting
         let to_ratio = |x: f64| -> Ratio<isize> { Ratio::<isize>::approximate_float(x).unwrap() };
@@ -431,35 +457,35 @@ impl FactoredBoundaryMatrixDowker {
         // triangles involved
         let bounding_difference             =   
             x.iter().cloned()
-            .filter( |x| array_matching.contains_keymaj( &x.0) ) // only take entries for boundaries
-            .map(|(k,v)| (array_matching.keymaj_to_keymin( &k ).clone().unwrap(),v) )
-            .multiply_matrix_packet_minor_descend( self.factored.jordan_basis_matrix_packet() )
+            .filter( |x| matching_matrix.has_a_match_for_row_index( &x.0) ) // only take entries for boundaries
+            .map(|(k,v)| (matching_matrix.column_index_for_row_index( &k ).clone().unwrap(),v) )
+            .multiply_self_as_a_column_vector_with_matrix_and_return_entries_in_reverse_order( self.differential_umatch.differential_comb() )
             .collect_vec();
 
         // essential cycles involved
         let essential_difference            =   
             x.iter().cloned()
-            .filter( |x| array_matching.lacks_keymin( &x.0 ) ) // only take entries for boundaries
-            .multiply_matrix_packet_minor_descend( self.factored.jordan_basis_matrix_packet() )
+            .filter( |x| matching_matrix.lacks_a_match_for_column_index( &x.0 ) ) // only take entries for boundaries
+            .multiply_self_as_a_column_vector_with_matrix_and_return_entries_in_reverse_order( self.differential_umatch.differential_comb() )
             .collect_vec();       
 
         let objective_old               =   optimized.cost_b().clone();
         let objective_min               =   optimized.cost_y().clone();
 
         // let dict = PyDict::new(py);
-        // dict.set_item( "birth simplex", birth_simplex.clone() ).ok().unwrap();        
-        // dict.set_item( "dimension", birth_simplex.len() as isize - 1 ).ok().unwrap();
-        // dict.set_item( "initial cycle objective value", objective_old ).ok().unwrap();
-        // dict.set_item( "optimal cycle objective value", objective_min ).ok().unwrap();
-        // dict.set_item( "initial cycle nnz", cycle_initial.len() ).ok().unwrap();
-        // dict.set_item( "optimal cycle nnz", cycle_optimal.len() ).ok().unwrap();
-        // dict.set_item( "initial cycle", cycle_initial.export() ).ok().unwrap();        
-        // dict.set_item( "optimal cycle", cycle_optimal.export() ).ok().unwrap();
-        // dict.set_item( "difference in bounding chains nnz", bounding_difference.len() ).ok().unwrap();         
-        // dict.set_item( "difference in bounding chains", bounding_difference.export() ).ok().unwrap();   
-        // dict.set_item( "difference in essential cycles nnz", essential_difference.len() ).ok().unwrap();                                            
-        // dict.set_item( "difference in essential cycles", essential_difference.export() ).ok().unwrap();
-        // dict.set_item( "before/after", beforeafter).ok().unwrap();
+        // dict.set_item( "birth simplex", birth_simplex.clone() )?;        
+        // dict.set_item( "dimension", birth_simplex.len() as isize - 1 )?;
+        // dict.set_item( "initial cycle objective value", objective_old )?;
+        // dict.set_item( "optimal cycle objective value", objective_min )?;
+        // dict.set_item( "initial cycle nnz", cycle_initial.len() )?;
+        // dict.set_item( "optimal cycle nnz", cycle_optimal.len() )?;
+        // dict.set_item( "initial_cycle", cycle_initial.export() )?;        
+        // dict.set_item( "optimal_cycle", cycle_optimal.export() )?;
+        // dict.set_item( "difference in bounding chains nnz", bounding_difference.len() )?;         
+        // dict.set_item( "surface_between_cycles", bounding_difference.export() )?;   
+        // dict.set_item( "difference in essential cycles nnz", essential_difference.len() )?;                                            
+        // dict.set_item( "difference_in_essential cycles", essential_difference.export() )?;
+        // dict.set_item( "before/after", beforeafter)?;
 
 
 
@@ -469,7 +495,7 @@ impl FactoredBoundaryMatrixDowker {
         //  * COMPUTE (Ax + z) - y
         //  * ENSURE ALL VECTORS ARE SORTED
 
-        let ring_operator   =   self.factored.umatch().ring_operator();
+        let ring_operator   =   boundary_matrix.ring_operator();
         let order_operator  =   ReverseOrder::new( OrderOperatorByKey::new() );        
 
         // We place all iterators in wrappers that check that the results are sorted
@@ -496,7 +522,9 @@ impl FactoredBoundaryMatrixDowker {
                     bounding_difference
                         .iter()
                         .cloned()
-                        .multiply_matrix_packet_minor_descend(self.factored.umatch().mapping_ref_packet()),  // sorted in reverse
+                        .multiply_self_as_a_column_vector_with_matrix_and_return_entries_in_reverse_order(
+                            self.differential_umatch.boundary_matrix()
+                        ),  // sorted in reverse
                     order_operator,                 // judges order in reverse
                 );  
 
@@ -574,13 +602,13 @@ impl FactoredBoundaryMatrixDowker {
         dict.set_item(
             "type of chain", 
             vec![
-                "initial cycle", 
-                "optimal cycle", 
-                "difference in bounding chains", 
+                "initial_cycle", 
+                "optimal_cycle", 
+                "surface_between_cycles", 
                 "difference in essential chains", 
                 "Ax + z - y"
             ]
-        ).ok().unwrap();
+        )?;
 
         // objective costs
         dict.set_item(
@@ -592,7 +620,7 @@ impl FactoredBoundaryMatrixDowker {
                 None, 
                 None, 
             ] 
-        ).ok().unwrap(); 
+        )?; 
 
         // number of nonzero entries per vector       
         dict.set_item(
@@ -604,27 +632,27 @@ impl FactoredBoundaryMatrixDowker {
                 essential_difference.len(),
                 ax_plus_z_minus_y.len(),
             ] 
-        ).ok().unwrap();
+        )?;
 
         // vectors
         dict.set_item(
             "chain", 
             vec![ 
-                cycle_initial.clone().export(), 
-                cycle_optimal.clone().export(), 
-                bounding_difference.clone().export(), 
-                essential_difference.clone().export(),
-                ax_plus_z_minus_y.clone().export(),
+                cycle_initial.into_dataframe_format(py)?, 
+                cycle_optimal.into_dataframe_format(py)?, 
+                bounding_difference.into_dataframe_format(py)?, 
+                essential_difference.into_dataframe_format(py)?,
+                ax_plus_z_minus_y.into_dataframe_format(py)?
                 ] 
-        ).ok().unwrap();   
+        )?;   
 
-        let pandas = py.import("pandas").ok().unwrap();       
+        let pandas = py.import("pandas")?;       
         let dict = pandas.call_method("DataFrame", ( dict, ), None)
-            .map(Into::< Py<PyAny> >::into).ok().unwrap();
-        let kwarg = vec![("inplace", true)].into_py_dict(py);        
-        dict.call_method( py, "set_index", ( "type of chain", ), Some(kwarg)).ok().unwrap();        
+            .map(Into::< Py<PyAny> >::into)?;
+        let kwarg = vec![("inplace", true)].into_py_dict(py)?;        
+        dict.call_method( py, "set_index", ( "type of chain", ), Some(&kwarg));        
 
-        return Some( dict )        
+        return  Ok(dict)
     }     
 
 
@@ -715,17 +743,21 @@ pub fn unique_row_indices_helper( vecvec:& Vec<Vec<usize>>) -> Vec<usize> {
     uindices
 }
 
-/// Return the transpose of a list of lists
+/// Returns indices for unique elements in a list of lists of integers
 /// 
-/// We regard the input as a sparse 0-1 matrix in vector-of-rowvectors format
+/// Concretely, if :math:`L = [L_1, \ldots, L_n]` is a list of lists of integers, then
+/// this function returns a list of indices :math:`I = [i_1, \ldots, i_k]` such that
+/// :math:`L_{i_1}, \ldots, L_{i_k}` are the unique elements of :math:`L`.
 #[pyfunction]
 pub fn unique_row_indices( vecvec: Vec<Vec<usize>>) -> PyResult<Vec<usize>> {
     Ok(unique_row_indices_helper( & vecvec))
 }
 
-/// Return the transpose of a list of lists
+/// Returns a list of unique elements in a list of lists of integers
 /// 
-/// We regard the input as a sparse 0-1 matrix in vector-of-rowvectors format
+/// Concretely, if :math:`L = [L_1, \ldots, L_n]` is a list of lists of integers, then
+/// this function returns a list of lists :math:`U = [U_1, \ldots, U_k]` such that
+/// :math:`U_{i_1}, \ldots, U_{i_k}` are the unique elements of :math:`L`.
 #[pyfunction]
 pub fn unique_rows( vecvec: Vec<Vec<usize>>) -> PyResult<Vec<Vec<usize>>> {
     let uindices = unique_row_indices_helper(&vecvec);
