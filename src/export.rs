@@ -1,18 +1,90 @@
 //! Export data to Python
+//! 
+//! Provides wrappers for exporting data to Python.
+//! 
+//! There are wrappers to export to dataframes, matrices, dictionaries, etc. This is handy, since you can choose
+//! the format you want to export, then use the corresponding wrapper.
+//! 
+
+use std::sync::Arc;
 
 use itertools::Itertools;
 use num::rational::Ratio;
+use num::ToPrimitive;
+use oat_rust::algebra::rings::types::native::RingOperatorForNativeRustNumberType;
+use oat_rust::topology::simplicial::from::graph_weighted::VietorisRipsComplex;
 use ordered_float::OrderedFloat;
 
 use pyo3::prelude::*;
-use pyo3::types::PyDict;
+use pyo3::types::{PyDict, PyTuple};
 
-use oat_rust::topology::simplicial::simplices::filtered::SimplexFiltered;
+use oat_rust::topology::simplicial::simplices::weighted::WeightedSimplex;
 use sprs::CsMatBase;
 
 
+
+
+
+
+
+
+
+
+
+
 //  =========================================================
-//  THE TRAIT
+//  THE INTO TUPLES TRAIT
+//  =========================================================
+
+
+
+
+pub trait IntoVecOfPyTuples where Self: Sized {
+    fn into_vec_of_py_tuples(self, py: Python<'_>) -> PyResult< Vec<pyo3::Bound<'_, PyTuple, >> >;
+}
+
+
+impl IntoVecOfPyTuples for 
+    Vec< Vec< u16 > >
+{
+    /// Converts `self` into a vector of tuples
+    fn into_vec_of_py_tuples(self, py: Python<'_>) -> PyResult< Vec<pyo3::Bound<'_, PyTuple, >> > {
+        let mut tuples = Vec::with_capacity(self.len());
+        for simplex in self.iter() {
+            let tuple: pyo3::Bound<'_, PyTuple> = PyTuple::new(py, simplex)?;
+            tuples.push(tuple);
+        }
+        Ok(tuples)
+    }
+}
+
+
+
+
+
+//  =========================================================
+//  THE SCIPY CSR TRAIT
+//  =========================================================
+
+/// Provides a method `into_scipy_csr_format` for any type `T`
+pub trait IntoScipyCsrFormat where Self: Sized {
+    fn into_scipy_csr_format(self, py: Python<'_>) -> PyResult<PyObject>;   // ScipyCsrExportWrapper< Self >;   
+}
+
+// /// Wrapper for matrices we wish to export into Scipy CSR format
+// pub struct ScipyCsrExportWrapper< T > {
+//     pub data: T,
+// }
+
+
+
+
+
+
+
+
+//  =========================================================
+//  THE EXPORT TRAIT
 //  =========================================================
 
 
@@ -25,6 +97,7 @@ use sprs::CsMatBase;
 /// 2. Then convert any object `t: T` to an object `wrapper: ForExport< T >`
 /// via the `Export` trait; concretely `wrapper = t.export()`.
 #[derive(Copy,Clone,Debug,Eq,PartialEq,Ord,PartialOrd)]
+#[derive(IntoPyObject)]
 pub struct ForExport< T > {
     pub data: T,
 }
@@ -38,253 +111,138 @@ impl < T > Export for T {
     fn export( self ) -> ForExport< Self > { ForExport{ data: self } }    
 }
 
+
+
+
+
+
+
+
 //  =========================================================
-//  DELETEABLE
+//  THE DATAFRAME TRAIT
 //  =========================================================
 
-pub fn export_ratio( r: & Ratio< isize >) -> PyResult<Py<PyAny>> {
-    Python::with_gil(|py| {
-        let frac = py.import("fractions")?;
-        frac.call_method("Fraction", ( r.numer().clone(), r.denom().clone() ), None)
+/// Provides a method `into_dataframe` for any type `T`
+pub trait IntoDataframeFormat where Self: Sized {
+    fn into_dataframe_format(&self, py: Python<'_>) -> PyResult<PyObject>;   
+}
+
+
+
+
+
+
+
+
+
+
+//  =========================================================
+//  Vec< (WeightedSimplex, Ratio) >
+//  =========================================================
+
+
+impl IntoDataframeFormat for 
+        
+    Vec< ( WeightedSimplex< OrderedFloat<f64> >, Ratio< isize > ) >
+{
+    /// Returns a Pandas data frame with columns `simplex`, `filtration`, and `coefficient`
+    fn into_dataframe_format(&self, py: Python<'_>) -> PyResult<PyObject> {
+        let dict = PyDict::new(py);
+        let mut simplices = Vec::with_capacity(self.len());
+        for entry in self.iter() {
+            let simplex = entry.0.vertices();
+            let simplex: pyo3::Bound<'_, PyTuple> = PyTuple::new(py, simplex)?;
+            simplices.push(simplex);
+        }
+        dict.set_item( "simplex",     simplices)?;
+        dict.set_item( "filtration",  self.iter().map( |(s,_)| s.filtration().into_inner() ).collect_vec() )?;
+        dict.set_item( "coefficient", self.iter().map( |(_,z)| z.clone() ).collect_vec() )?;
+        let pandas = py.import("pandas").ok().unwrap();       
+        pandas.call_method("DataFrame", ( dict, ), None).map(Into::into)
+    }
+}
+
+
+
+
+
+
+//  =========================================================
+//  Vec< WeightedSimplex >
+//  =========================================================
+
+
+impl IntoDataframeFormat for   
+
+        Vec< 
+            WeightedSimplex< OrderedFloat<f64> >
+        >  
+{
+    /// Returns a Pandas data frame with columns `simplex`, `filtration`
+    fn into_dataframe_format(&self, py: Python<'_>) -> PyResult<PyObject> {
+        let dict = PyDict::new(py);
+        let mut simplices = Vec::with_capacity(self.len());
+        for simplex in self.iter() {
+            let simplex = simplex.vertices();
+            let simplex: pyo3::Bound<'_, PyTuple> = PyTuple::new(py, simplex)?;
+            simplices.push(simplex);
+        }
+        dict.set_item( "simplex",     simplices ).ok().unwrap();
+        dict.set_item( "filtration",  self.iter().map( |s| s.filtration().into_inner() ).collect_vec() ).ok().unwrap();
+        let pandas = py.import("pandas").ok().unwrap();       
+        pandas.call_method("DataFrame", ( dict, ), None).map(Into::into)
+    }
+}
+
+
+//  =========================================================
+//  Vec< (WeightedSimplex, f64) >
+//  =========================================================
+
+
+impl IntoDataframeFormat for   
+        
+    Vec< ( WeightedSimplex< OrderedFloat<f64> >, f64 ) > 
+{
+    /// Returns a Pandas data frame with columns `simplex`, `filtration`, and `coefficient`
+    fn into_dataframe_format(&self, py: Python<'_>) -> PyResult<PyObject> {
+        let dict = PyDict::new(py);
+        let mut simplices = Vec::with_capacity(self.len());
+        for (simplex,_coefficient) in self.iter() {
+            let simplex = simplex.vertices();
+            let simplex: pyo3::Bound<'_, PyTuple> = PyTuple::new(py, simplex)?;
+            simplices.push(simplex);
+        }
+        dict.set_item( "simplex",     simplices ).ok().unwrap();
+        dict.set_item( "filtration",  self.iter().map( |(s,_)| s.filtration().into_inner() ).collect_vec() ).ok().unwrap();
+        dict.set_item( "coefficient", self.iter().map( |(_,z)| z.clone() ).collect_vec() ).ok().unwrap();
+        let pandas = py.import("pandas").ok().unwrap();       
+        pandas.call_method("DataFrame", ( dict, ), None)
             .map(Into::into)
-    })
-}
-
-#[pyfunction]
-pub fn export_fraction(numer: isize, denom: isize) -> PyResult<Py<PyAny>> {
-    Python::with_gil(|py| {
-        let frac = py.import("fractions")?;
-        frac.call_method("Fraction", (numer, denom), None)
-            .map(Into::into)
-    })
-}
-
-#[pyfunction]
-pub fn export_fraction_with_current_gil<'py>(py: Python<'py>, numer: isize, denom: isize) -> PyResult<&'py PyAny> {
-    let frac = py.import("fractions")?;
-    frac.call_method("Fraction", (numer, denom), None)
-}
-
-#[pyfunction]
-pub fn my_dict<'py>(py: Python<'py>) -> &'py PyDict {
-    let d = PyDict::new( py );
-    d.set_item( 1, 4 ).ok();
-    d 
-}
-
-
-#[pyfunction]
-pub fn return_frame<'py>(py: Python<'py>) -> ForExport< Vec< ( SimplexFiltered< OrderedFloat<f64> >, Ratio< isize > ) > >  { // PyResult<Py<PyAny>> { // 
-    let v 
-        = vec![ 
-                ( 
-                    SimplexFiltered{ filtration: OrderedFloat(0.0), vertices: vec![0] },
-                    Ratio::new( 1, 1 ),
-                ) 
-            ];
-    return v.export()
-    // let v = v.export();
-    // return v.into_py(py)
-}
-
-
-//  =========================================================
-//  Ratio< i64 >
-//  =========================================================
-
-
-impl IntoPy< PyResult<Py<PyAny>> > for ForExport< Ratio< isize > > {
-    fn into_py(self, py: Python<'_>) -> PyResult<Py<PyAny>> {
-        let frac = py.import("fractions")?;
-        let numer = self.data.numer().clone();
-        let denom = self.data.denom().clone();        
-        frac.call_method("Fraction", ( numer, denom ), None)
-            .map(Into::into)
-    }
-}
-
-impl ToPyObject for ForExport< Ratio< isize > > {
-    fn to_object( &self, py: Python<'_>) -> Py<PyAny> {
-        export_ratio( & self.data ).ok().unwrap()
-    }
-}
-
-//  =========================================================
-//  OrderedFloat< f64 >
-//  =========================================================
-
-impl IntoPy< f64 > for ForExport< OrderedFloat< f64 > > {
-    fn into_py(self, _py: Python<'_>) -> f64 {
-        self.data.into_inner()
-    }
-}
-
-impl ToPyObject for ForExport< OrderedFloat< f64 > > {
-    fn to_object( &self, py: Python<'_>) -> PyObject {
-        self.data.clone().into_inner().to_object(py)
     }
 }
 
 
 //  =========================================================
-//  SimplexFiltered
+//  FloatChain
 //  =========================================================
 
 
-impl IntoPy
-        < Py<PyAny> > for 
+// impl IntoDataframeFormat for   
         
-    ForExport
-        < 
-                SimplexFiltered< OrderedFloat<f64> > 
-        > 
-{
-    /// Returns a Padas data frame with columns `simplex`, `filtration`, and `coefficient`
-    fn into_py(self, py: Python<'_>) -> Py<PyAny> {
-        let dict = PyDict::new(py);
-        dict.set_item( "simplex",     self.data.vertices() ).ok().unwrap();
-        dict.set_item( "filtration",  self.data.filtration().into_inner() ).ok().unwrap();
-        return dict.into()
-    }
-}
-
-impl ToPyObject for 
-        
-    ForExport
-        < 
-                SimplexFiltered< OrderedFloat<f64> > 
-        > 
-{
-    /// Returns a Padas data frame with columns `simplex`, `filtration`, and `coefficient`
-    fn to_object(&self, py: Python<'_>) -> PyObject {
-        return self.clone().into_py(py);
-    }
-}
-
-
-
-//  =========================================================
-//  Vec< (SimplexFiltered, Ratio) >
-//  =========================================================
-
-
-impl IntoPy
-        < Py<PyAny> > for 
-        
-    ForExport
-        < Vec< ( SimplexFiltered< OrderedFloat<f64> >, Ratio< isize > ) > > 
-{
-    /// Returns a Padas data frame with columns `simplex`, `filtration`, and `coefficient`
-    fn into_py(self, py: Python<'_>) -> Py<PyAny> {
-        let dict = PyDict::new(py);
-        dict.set_item( "simplex",     self.data.iter().map( |(s,_)| s.vertices() ).collect_vec() ).ok().unwrap();
-        dict.set_item( "filtration",  self.data.iter().map( |(s,_)| s.filtration().into_inner() ).collect_vec() ).ok().unwrap();
-        dict.set_item( "coefficient", self.data.iter().map( |(_,z)| z.clone().export() ).collect_vec() ).ok().unwrap();
-        let pandas = py.import("pandas").ok().unwrap();       
-        pandas.call_method("DataFrame", ( dict, ), None)
-            .map(Into::into).ok().unwrap()
-    }
-}
-
-impl ToPyObject for 
-        
-    ForExport
-        < Vec< ( SimplexFiltered< OrderedFloat<f64> >, Ratio< isize > ) > > 
-{
-    /// Returns a Padas data frame with columns `simplex`, `filtration`, and `coefficient`
-    fn to_object(&self, py: Python<'_>) -> PyObject {
-        let dict = PyDict::new(py);
-        dict.set_item( "simplex",     self.data.iter().map( |(s,_)| s.vertices() ).collect_vec() ).ok().unwrap();
-        dict.set_item( "filtration",  self.data.iter().map( |(s,_)| s.filtration().into_inner() ).collect_vec() ).ok().unwrap();
-        dict.set_item( "coefficient", self.data.iter().map( |(_,z)| z.clone().export() ).collect_vec() ).ok().unwrap();
-        let pandas = py.import("pandas").ok().unwrap();       
-        pandas.call_method("DataFrame", ( dict, ), None)
-            .map(Into::into).ok().unwrap()
-    }
-}
-
-
-//  =========================================================
-//  Vec< SimplexFiltered >
-//  =========================================================
-
-
-impl IntoPy
-        < Py<PyAny> > for 
-        
-    ForExport
-        < 
-            Vec< 
-                SimplexFiltered< OrderedFloat<f64> > 
-            > 
-        > 
-{
-    /// Returns a Padas data frame with columns `simplex`, `filtration`, and `coefficient`
-    fn into_py(self, py: Python<'_>) -> Py<PyAny> {
-        let dict = PyDict::new(py);
-        dict.set_item( "simplex",     self.data.iter().map( |s| s.vertices() ).collect_vec() ).ok().unwrap();
-        dict.set_item( "filtration",  self.data.iter().map( |s| s.filtration().into_inner() ).collect_vec() ).ok().unwrap();
-        let pandas = py.import("pandas").ok().unwrap();       
-        pandas.call_method("DataFrame", ( dict, ), None)
-            .map(Into::into).ok().unwrap()
-    }
-}
-
-impl ToPyObject for 
-        
-    ForExport
-        < 
-            Vec< 
-                SimplexFiltered< OrderedFloat<f64> > 
-            > 
-        > 
-{
-    /// Returns a Padas data frame with columns `simplex`, `filtration`, and `coefficient`
-    fn to_object(&self, py: Python<'_>) -> PyObject {
-        return self.clone().into_py(py);
-    }
-}
-
-
-//  =========================================================
-//  Vec< (SimplexFiltered, f64) >
-//  =========================================================
-
-
-impl IntoPy
-        < Py<PyAny> > for 
-        
-    ForExport
-        < Vec< ( SimplexFiltered< OrderedFloat<f64> >, f64 ) > > 
-{
-    /// Returns a Padas data frame with columns `simplex`, `filtration`, and `coefficient`
-    fn into_py(self, py: Python<'_>) -> Py<PyAny> {
-        let dict = PyDict::new(py);
-        dict.set_item( "simplex",     self.data.iter().map( |(s,_)| s.vertices() ).collect_vec() ).ok().unwrap();
-        dict.set_item( "filtration",  self.data.iter().map( |(s,_)| s.filtration().into_inner() ).collect_vec() ).ok().unwrap();
-        dict.set_item( "coefficient", self.data.iter().map( |(_,z)| z.clone() ).collect_vec() ).ok().unwrap();
-        let pandas = py.import("pandas").ok().unwrap();       
-        pandas.call_method("DataFrame", ( dict, ), None)
-            .map(Into::into).ok().unwrap()
-    }
-}
-
-impl ToPyObject for 
-        
-    ForExport
-        < Vec< ( SimplexFiltered< OrderedFloat<f64> >, f64 ) > > 
-{
-    /// Returns a Padas data frame with columns `simplex`, `filtration`, and `coefficient`
-    fn to_object(&self, py: Python<'_>) -> PyObject {
-        let dict = PyDict::new(py);
-        dict.set_item( "simplex",     self.data.iter().map( |(s,_)| s.vertices() ).collect_vec() ).ok().unwrap();
-        dict.set_item( "filtration",  self.data.iter().map( |(s,_)| s.filtration().into_inner() ).collect_vec() ).ok().unwrap();
-        dict.set_item( "coefficient", self.data.iter().map( |(_,z)| z.clone() ).collect_vec() ).ok().unwrap();
-        let pandas = py.import("pandas").ok().unwrap();       
-        pandas.call_method("DataFrame", ( dict, ), None)
-            .map(Into::into).ok().unwrap()
-    }
-}
+//     FloatChain
+// {
+//     /// Returns a Pandas data frame with columns `simplex`, `filtration`, and `coefficient`
+//     fn into_dataframe_format(&self, py: Python<'_>) -> PyResult<PyObject> {
+//         let dict = PyDict::new(py);
+//         dict.set_item( "simplex",     self.index_tool.vec_elements_in_order().iter().map( |s| s.vertices() ).collect_vec() ).ok().unwrap();
+//         dict.set_item( "filtration",  self.index_tool.vec_elements_in_order().iter().map( |s| s.filtration().into_inner() ).collect_vec() ).ok().unwrap();
+//         dict.set_item( "coefficient", self.coefficients.clone()).ok().unwrap();
+//         let pandas = py.import("pandas").ok().unwrap();       
+//         pandas.call_method("DataFrame", ( dict, ), None)
+//             .map(Into::into)
+//     }
+// }
 
 
 //  =========================================================
@@ -292,38 +250,46 @@ impl ToPyObject for
 //  =========================================================
 
 
-impl IntoPy
-        < Py<PyAny> > for 
+impl IntoDataframeFormat for   
         
-    ForExport
-        < Vec< ( Vec<isize>, Ratio< isize > ) > > 
+    Vec< ( Vec<isize>, Ratio< isize > ) >
 {
-    /// Returns a Padas data frame with columns `simplex`, `filtration`, and `coefficient`
-    fn into_py(self, py: Python<'_>) -> Py<PyAny> {
+    /// Returns a Pandas data frame with columns `simplex`, `filtration`, and `coefficient`
+    fn into_dataframe_format(&self, py: Python<'_>) -> PyResult<PyObject> {
         let dict = PyDict::new(py);
-        dict.set_item( "simplex",     self.data.iter().map( |(s,_)| s.clone() ).collect_vec() ).ok().unwrap();
-        dict.set_item( "coefficient", self.data.iter().map( |(_,z)| z.clone().export() ).collect_vec() ).ok().unwrap();
+        let mut simplices = Vec::with_capacity(self.len());
+        for (simplex,_coefficient) in self.iter() {
+            let simplex: pyo3::Bound<'_, PyTuple> = PyTuple::new(py, simplex)?;
+            simplices.push(simplex);
+        }
+        dict.set_item( "simplex",     simplices ).ok().unwrap();
+        dict.set_item( "coefficient", self.iter().map( |(_,z)| z.clone() ).collect_vec() ).ok().unwrap();
         let pandas = py.import("pandas").ok().unwrap();       
         pandas.call_method("DataFrame", ( dict, ), None)
-            .map(Into::into).ok().unwrap()
+            .map(Into::into)
     }
 }
 
-impl ToPyObject for 
+impl IntoDataframeFormat for   
         
-    ForExport
-        < Vec< ( Vec<isize>, Ratio< isize > ) > > 
+    Vec< ( Vec<usize>, Ratio< isize > ) >
 {
-    /// Returns a Padas data frame with columns `simplex`, `filtration`, and `coefficient`
-    fn to_object(&self, py: Python<'_>) -> PyObject {
+    /// Returns a Pandas data frame with columns `simplex`, `filtration`, and `coefficient`
+    fn into_dataframe_format(&self, py: Python<'_>) -> PyResult<PyObject> {
         let dict = PyDict::new(py);
-        dict.set_item( "simplex",     self.data.iter().map( |(s,_)| s.clone() ).collect_vec() ).ok().unwrap();
-        dict.set_item( "coefficient", self.data.iter().map( |(_,z)| z.clone().export() ).collect_vec() ).ok().unwrap();
+        let mut simplices = Vec::with_capacity(self.len());
+        for (simplex,_coefficient) in self.iter() {
+            let simplex: pyo3::Bound<'_, PyTuple> = PyTuple::new(py, simplex)?;
+            simplices.push(simplex);
+        }        
+        dict.set_item( "simplex",     simplices ).ok().unwrap();
+        dict.set_item( "coefficient", self.iter().map( |(_,z)| z.clone() ).collect_vec() ).ok().unwrap();
         let pandas = py.import("pandas").ok().unwrap();       
         pandas.call_method("DataFrame", ( dict, ), None)
-            .map(Into::into).ok().unwrap()
+            .map(Into::into)
     }
 }
+
 
 
 //  =========================================================
@@ -331,58 +297,76 @@ impl ToPyObject for
 //  =========================================================
 
 
-impl IntoPy
-        < Py<PyAny> > for 
+impl IntoDataframeFormat for   
         
-    ForExport
-        < Vec< ( Vec<isize>, f64 ) > > 
+    Vec< ( Vec<isize>, f64 ) >
 {
-    /// Returns a Padas data frame with columns `simplex`, `filtration`, and `coefficient`
-    fn into_py(self, py: Python<'_>) -> Py<PyAny> {
+    /// Returns a Pandas data frame with columns `simplex`, `filtration`, and `coefficient`
+    fn into_dataframe_format(&self, py: Python<'_>) -> PyResult<PyObject> {
         let dict = PyDict::new(py);
-        dict.set_item( "simplex",     self.data.iter().map( |(s,_)| s.clone() ).collect_vec() ).ok().unwrap();
-        dict.set_item( "coefficient", self.data.iter().map( |(_,z)| z.clone() ).collect_vec() ).ok().unwrap();
+        let mut simplices = Vec::with_capacity(self.len());
+        for (simplex,_coefficient) in self.iter() {
+            let simplex: pyo3::Bound<'_, PyTuple> = PyTuple::new(py, simplex)?;
+            simplices.push(simplex);
+        }        
+        dict.set_item( "simplex",     simplices ).ok().unwrap();
+        dict.set_item( "coefficient", self.iter().map( |(_,z)| z.clone() ).collect_vec() ).ok().unwrap();
         let pandas = py.import("pandas").ok().unwrap();       
         pandas.call_method("DataFrame", ( dict, ), None)
-            .map(Into::into).ok().unwrap()
-    }
-}
-
-impl ToPyObject for 
-        
-    ForExport
-        < Vec< ( Vec<isize>, f64 ) > > 
-{
-    /// Returns a Padas data frame with columns `simplex`, `filtration`, and `coefficient`
-    fn to_object(&self, py: Python<'_>) -> PyObject {
-        let dict = PyDict::new(py);
-        dict.set_item( "simplex",     self.data.iter().map( |(s,_)| s.clone() ).collect_vec() ).ok().unwrap();
-        dict.set_item( "coefficient", self.data.iter().map( |(_,z)| z.clone() ).collect_vec() ).ok().unwrap();
-        let pandas = py.import("pandas").ok().unwrap();       
-        pandas.call_method("DataFrame", ( dict, ), None)
-            .map(Into::into).ok().unwrap()
+            .map(Into::into)
     }
 }
 
 
-
-//  =========================================================
-//  CSMAT
-//  =========================================================
-
-
-impl IntoPy
-        < Py<PyAny> > for 
+impl IntoDataframeFormat for   
         
-    ForExport
-        < CsMatBase< Ratio<isize>, usize, Vec<usize>, Vec<usize>, Vec<Ratio<isize>> > > 
+    Vec< ( Vec<usize>, f64 ) >
 {
-    /// Returns a Padas data frame with columns `simplex`, `filtration`, and `coefficient`
-    fn into_py(self, py: Python<'_>) -> Py<PyAny> {
+    /// Returns a Pandas data frame with columns `simplex`, `filtration`, and `coefficient`
+    fn into_dataframe_format(&self, py: Python<'_>) -> PyResult<PyObject> {
+        let dict = PyDict::new(py);
+        dict.set_item( "simplex",     self.iter().map( |(s,_)| s.clone() ).collect_vec() ).ok().unwrap();
+        dict.set_item( "coefficient", self.iter().map( |(_,z)| z.clone() ).collect_vec() ).ok().unwrap();
+        let pandas = py.import("pandas").ok().unwrap();       
+        pandas.call_method("DataFrame", ( dict, ), None)
+            .map(Into::into)
+    }
+}
 
-        let shape = self.data.shape();
-        let (indptr, indices, data) = self.data.into_raw_storage();
-        let data =  data.into_iter().map(|x| x.export().into_py(py).ok().unwrap() ).collect_vec();
+
+
+
+
+
+//  -----------------------------------------------------------------
+//  IMPLEMENT EXPORT FOR CSMAT< Ratio<isize> >
+//  -----------------------------------------------------------------
+
+
+impl IntoScipyCsrFormat for 
+        
+    CsMatBase< 
+        Ratio<isize>, 
+        usize, 
+        Vec<usize>, 
+        Vec<usize>, 
+        Vec<Ratio<isize>> 
+    >
+{
+    /// Converts `self` into a Scipy CSR matrix
+    fn into_scipy_csr_format( self, py: Python<'_>) -> PyResult<PyObject> {
+
+        let shape = self.shape();
+
+        let (indptr, indices, data) = self.into_raw_storage();
+        
+        let data: Vec<f64> = data.into_iter().map(|r| r.to_f64().unwrap()).collect();
+
+
+        // We once tried to use the following commented methods to get references to the data without consuming `self`, but ran into some lifetime issues we didn't understand
+        // let indices = self.indices();
+        // let indptr = self.indptr().raw_storage();
+        // let data = self.data();
 
         let sparse = py.import("scipy.sparse").ok().unwrap();
         return sparse.call_method("csr_matrix", 
@@ -395,17 +379,51 @@ impl IntoPy
                 shape
             ), 
             None
-        ).map(Into::into).ok().unwrap()
+        ).map(Into::into)
     }
 }
 
-impl ToPyObject for 
+
+//  -----------------------------------------------------------------
+//  IMPLEMENT EXPORT FOR CSMAT< OrderedFloat<f64> >
+//  -----------------------------------------------------------------
+
+impl IntoScipyCsrFormat for 
         
-    ForExport
-        < CsMatBase< Ratio<isize>, usize, Vec<usize>, Vec<usize>, Vec<Ratio<isize>> > > 
+    CsMatBase< 
+        OrderedFloat<f64>, 
+        usize, 
+        Vec<usize>, 
+        Vec<usize>, 
+        Vec<OrderedFloat<f64>> 
+    >
 {
-    /// Returns a Padas data frame with columns `simplex`, `filtration`, and `coefficient`
-    fn to_object(&self, py: Python<'_>) -> PyObject {
-        return self.clone().into_py(py)
+    /// Converts `self` into a Scipy CSR matrix
+    fn into_scipy_csr_format( self, py: Python<'_>) -> PyResult<PyObject> {
+
+        let shape = self.shape();
+
+        let (indptr, indices, data) = self.into_raw_storage();
+        
+        let data: Vec<f64> = data.into_iter().map(|r| r.to_f64().unwrap()).collect();
+
+
+        // We once tried to use the following commented methods to get references to the data without consuming `self`, but ran into some lifetime issues we didn't understand
+        // let indices = self.indices();
+        // let indptr = self.indptr().raw_storage();
+        // let data = self.data();
+
+        let sparse = py.import("scipy.sparse").ok().unwrap();
+        return sparse.call_method("csr_matrix", 
+            (
+                (
+                    data,
+                    indices,
+                    indptr,
+                ),
+                shape
+            ), 
+            None
+        ).map(Into::into)
     }
 }
