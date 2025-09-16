@@ -9,7 +9,7 @@ Open Applied Topology (OAT) is an extension of the [ExHACT project](https://www.
 Major contributions to OAT come from Pacific Northwest National Laboratory (PNNL). See our [sister repository](https://github.com/pnnl/oat_pnnl).  PNNL shares its contributions under the following LICENSE agreement:
 
 ```
-Copyright 2023 Battelle Memorial Institute
+Copyright 2023, 2024, 2025 Battelle Memorial Institute
 
 1.	Battelle Memorial Institute (hereinafter Battelle) hereby grants permission to any person or entity lawfully obtaining a copy of this software and associated documentation files (hereinafter “the Software”) to redistribute and use the Software in source and binary forms, with or without modification.  Such person or entity may use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and may permit others to do so, subject to the following conditions:
 	•	Redistributions of source code must retain the above copyright notice, this list of conditions and the following disclaimers. 

@@ -1,0 +1,21 @@
+/* This CSS file increases the width of the sidebar in the Sphinx documentation. */
+
+body .wy-side-scroll {
+    overflow-x: auto !important;
+    overflow-y: auto !important;
+    white-space: nowrap !important;
+    /* background: #bcbcbc !important; */
+}
+
+
+/* body .wy-side-scroll {
+    overflow-x: auto !important;
+    overflow-y: auto !important;
+    white-space: nowrap !important;
+    background: linear-gradient(
+        to right,
+        white 0%,
+        white 80%,
+        #bcbcbc 100%
+    ) !important;
+} */
